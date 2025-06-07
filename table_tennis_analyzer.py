@@ -78,7 +78,7 @@ with st.form("rally_form", clear_on_submit=True):
     server = c1.selectbox("サーバー", players, index=0)
     winner = c2.selectbox("得点者", players, index=0)
 
-    reasons_default = ["サーブ得点", "レシーブミス", "3球目攻撃", "ラリー失点", "相手ミス"]
+    reasons_default = ["サーブ得点", "サーブミス", "レシーブミス", "3球目攻撃", "ラリー失点", "相手ミス"]
     reason = st.selectbox("得点要因", reasons_default + ["その他 (下に入力)"])
     custom_reason = ""
     if reason == "その他 (下に入力)":
