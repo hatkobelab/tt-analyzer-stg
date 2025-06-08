@@ -1,33 +1,73 @@
 """
-卓球試合アナライザー – モバイル版プロトタイプ (v2.2)
-====================================================
+TT Analyzer α版 – モバイル高速入力 (v3.2.2)
+===========================================
 
-* **選手名登録** – コーチが担当する選手名と対戦相手名を入力。
-* セット制 & 試合保存機能（最大 5 試合）
-* アイコンなし、スマホレイアウト
-
-起動:
-    streamlit run table_tennis_analyzer.py
+* ラジオで結果入力 → 登録後に自動リセット
+* 11点先取＋2点差でセット終了
+* ローカルファイル (`tt_state.pkl`) に自動保存／復元
+* グラフ描画を安定化（型明示 & 列存在チェック）
 """
 
 import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime
+import pickle, os
 
-# ───────────────────────── ユーティリティ ─────────────────────────
+DATA_FILE = "tt_state.pkl"
+
+# ──────────────────── UTIL ────────────────────
 
 def safe_rerun():
     if hasattr(st, "rerun"):
         st.rerun()
-    elif hasattr(st, "experimental_rerun"):
+    else:
         st.experimental_rerun()
 
-# ───────────────────────── ページ設定 ─────────────────────────
+# 全データリセット
+RESET_KEYS = [
+    "sets", "current_set", "saved_matches", "current_server", 
+    "serve_counter", "match_over", "outcome_radio", "reset_prompt",
+]
 
-st.set_page_config(page_title="卓球アナライザー", layout="centered", initial_sidebar_state="collapsed")
+def reset_all():
+    for k in RESET_KEYS:
+        if k in st.session_state:
+            del st.session_state[k]
+    # pickle ファイルも削除
+    if os.path.exists(DATA_FILE):
+        os.remove(DATA_FILE)
+    st.toast("データをリセットしました", icon="🗑️")
+    safe_rerun()
 
-# ───────────────────────── 選手名の設定 ─────────────────────────
+# ──────────────────── PERSISTENCE ────────────────────
+
+def load_state():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "rb") as f:
+                st.session_state.update(pickle.load(f))
+        except Exception:
+            pass
+
+def save_state():
+    keys = [
+        "player_name", "opponent_name", "sets", "current_set",
+        "saved_matches", "current_server", "serve_counter",
+    ]
+    data = {k: st.session_state.get(k) for k in keys if k in st.session_state}
+    with open(DATA_FILE, "wb") as f:
+        pickle.dump(data, f)
+
+if not st.session_state.get("_loaded", False):
+    load_state()
+    st.session_state["_loaded"] = True
+
+# ──────────────────── PAGE CONFIG ────────────────────
+
+st.set_page_config(page_title="TT Analyzer α版", layout="centered", initial_sidebar_state="collapsed")
+
+# ──────────────────── PLAYER NAMES ────────────────────
 
 if "player_name" not in st.session_state:
     st.session_state.player_name = "選手A"
@@ -38,190 +78,190 @@ with st.expander("選手設定", expanded=(st.session_state.player_name == "選�
     p_name = st.text_input("自分側（指導選手）", st.session_state.player_name)
     o_name = st.text_input("相手側", st.session_state.opponent_name)
     if st.button("保存", key="save_names"):
+        names_changed = (p_name.strip() or "選手A") != st.session_state.player_name or (o_name.strip() or "対戦相手") != st.session_state.opponent_name
         st.session_state.player_name = p_name.strip() or "選手A"
         st.session_state.opponent_name = o_name.strip() or "対戦相手"
+        if st.session_state.get("current_server") not in {st.session_state.player_name, st.session_state.opponent_name}:
+            st.session_state.current_server = st.session_state.player_name
+            st.session_state.serve_counter = 0
+        if names_changed and any(len(df) for df in st.session_state.get("sets", [])):
+            st.session_state.reset_prompt = True
+        save_state()
         safe_rerun()
 
-P = st.session_state.player_name
-O = st.session_state.opponent_name
+P, O = st.session_state.player_name, st.session_state.opponent_name
 players = [P, O]
 
-# ───────────────────────── セッション初期化 ─────────────────────────
+# ──────────────────── SESSION INIT ────────────────────
+
+def new_set():
+    return pd.DataFrame(columns=["Rally", "Server", "Winner", "ServeType", "Outcome"])
 
 if "sets" not in st.session_state:
-    st.session_state.sets = [pd.DataFrame(columns=[
-        "Rally", "Server", "Winner", "Reason", "Stroke", "Placement", "Notes"
-    ])]
+    st.session_state.sets = [new_set()]
     st.session_state.current_set = 0
-
 if "saved_matches" not in st.session_state:
-    # list of dict {date, player, opponent, sets}
     st.session_state.saved_matches = []
+if "current_server" not in st.session_state:
+    st.session_state.current_server = P
+if "serve_counter" not in st.session_state:
+    st.session_state.serve_counter = 0
+if "match_over" not in st.session_state:
+    st.session_state.match_over = False
 
-# ───────────────────────── タイトル & セット操作 ─────────────────────────
+# ──────────────────── CONSTANTS ────────────────────
 
-st.title("卓球試合アナライザー")
+SERVE_TYPES = [
+    "順回転サーブ（横/上/ナックル）", "順回転サーブ（下回転系）",
+    "バックハンドサーブ（横/上/ナックル）", "バックハンドサーブ（下回転系）",
+    "巻き込みサーブ（横/上/ナックル）", "巻き込みサーブ（下回転系）",
+    "しゃがみ込みサーブ（横/上/ナックル）", "しゃがみ込みサーブ（下回転系）",
+    "YGサーブ（横/上/ナックル）", "YGサーブ（下回転系）",
+]
 
-head_c1, head_c2, head_c3 = st.columns([1, 1, 2])
-head_c1.markdown(f"**現在のセット:** {st.session_state.current_set + 1}")
-if head_c2.button("新しいセット開始"):
-    st.session_state.sets.append(pd.DataFrame(columns=st.session_state.sets[0].columns))
+OUT_SERVER = ["サービスエース", "3球目攻撃", "ラリー得点", "サーブミス", "ラリー失点", "その他得点", "その他失点"]
+OUT_RECEIVE = ["レシーブエース", "ラリー得点", "レシーブミス", "ラリー失点", "その他得点", "その他失点"]
+
+WIN_SERVER = {"サービスエース", "3球目攻撃", "ラリー得点", "その他得点"}
+WIN_RECEIVE = {"レシーブエース", "ラリー得点", "その他得点"}
+
+# ──────────────────── HEADER ────────────────────
+
+if st.session_state.get("reset_prompt"):
+    st.warning("選手名を変更しました。既存の試合データをリセットしますか？")
+    col_r1, col_r2 = st.columns(2)
+    if col_r1.button("はい、リセット", key="confirm_reset"):
+        reset_all()
+    if col_r2.button("いいえ、保持", key="cancel_reset"):
+        del st.session_state["reset_prompt"]
+        save_state()
+
+st.title("TT Analyzer α版")
+
+c1, c2, _ = st.columns([1,1,1])
+c1.markdown(f"**現在セット:** {st.session_state.current_set + 1}")
+if c2.button("新しいセット"):
+    st.session_state.sets.append(new_set())
     st.session_state.current_set += 1
-    safe_rerun()
+    st.session_state.current_server = P
+    st.session_state.serve_counter = 0
+    st.session_state.match_over = False
+    save_state(); safe_rerun()
 
-# ───────────────────────── ラリー入力 ─────────────────────────
+# ──────────────────── INPUT UI ────────────────────
 
-current_log = st.session_state.sets[st.session_state.current_set]
+log = st.session_state.sets[st.session_state.current_set]
 
-with st.form("rally_form", clear_on_submit=True):
-    c1, c2 = st.columns(2)
-    server = c1.selectbox("サーバー", players, index=0)
-    winner = c2.selectbox("得点者", players, index=0)
+srv_col, type_col = st.columns([1,2])
+idx_default = players.index(st.session_state.current_server) if st.session_state.current_server in players else 0
+selected_server = srv_col.radio("サーバー", players, index=idx_default)
+if selected_server != st.session_state.current_server:
+    st.session_state.current_server = selected_server; st.session_state.serve_counter = 0
+serve_type = type_col.radio("サーブタイプ", SERVE_TYPES)
 
-    reasons_default = ["サーブ得点", "サーブミス", "レシーブミス", "3球目攻撃", "ラリー失点", "相手ミス"]
-    reason = st.selectbox("得点要因", reasons_default + ["その他 (下に入力)"])
-    custom_reason = ""
-    if reason == "その他 (下に入力)":
-        custom_reason = st.text_input("その他の理由を入力", placeholder="例: エッジボール")
+out_opts = OUT_SERVER if selected_server == P else OUT_RECEIVE
+selected_outcome = st.radio("結果を選択", ["--"] + out_opts, horizontal=True, key="outcome_radio")
 
-    c3, c4 = st.columns(2)
-    stroke = c3.selectbox("打球 (任意)", ["", "フォア", "バック", "フリック", "カット", "ロブ"])
-    placement = c4.selectbox("コース (任意)", ["", "ショート", "ロング", "ワイド", "ミドル"])
+if selected_outcome != "--":
+    winner = P if ((selected_server == P and selected_outcome in WIN_SERVER) or (selected_server == O and selected_outcome in WIN_RECEIVE)) else O
+    next_id = (log["Rally"].max() or 0) + 1
+    log.loc[len(log)] = [next_id, selected_server, winner, serve_type, selected_outcome]
 
-    notes = st.text_input("メモ (任意)")
+    st.session_state.serve_counter = (st.session_state.serve_counter + 1) % 2
+    if st.session_state.serve_counter == 0:
+        st.session_state.current_server = O if st.session_state.current_server == P else P
 
-    if st.form_submit_button("ラリーを追加", use_container_width=True):
-        next_rally = int(current_log["Rally"].max()) + 1 if not current_log.empty else 1
-        current_log.loc[len(current_log)] = [
-            next_rally, server, winner,
-            custom_reason if custom_reason else reason,
-            stroke, placement, notes,
-        ]
-        st.toast(f"ラリー {next_rally} を追加しました", icon="✅")
-        safe_rerun()
+    del st.session_state["outcome_radio"]  # reset radio
 
-# ───────────────────────── ログ編集 ─────────────────────────
+    my, op = (log["Winner"] == P).sum(), (log["Winner"] == O).sum()
+    if (my >= 11 or op >= 11) and abs(my - op) >= 2:
+        st.session_state.match_over = True
+    st.toast(f"ラリー {next_id} 登録", icon="✅")
+    save_state(); safe_rerun()
 
-with st.expander("ラリーログを編集／修正 (現在セット)"):
-    edited_df = st.data_editor(current_log, num_rows="dynamic", hide_index=True, key="editor")
-    st.session_state.sets[st.session_state.current_set] = edited_df
+# ──────────────────── SCOREBOARD ────────────────────
 
-    del_col, _ = st.columns([1, 3])
-    if del_col.button("最後のラリーを削除") and not edited_df.empty:
-        st.session_state.sets[st.session_state.current_set] = edited_df.iloc[:-1].copy()
-        safe_rerun()
-
-# ───────────────────────── スコアボード ─────────────────────────
-
-my_pts = (current_log["Winner"] == P).sum()
-opp_pts = (current_log["Winner"] == O).sum()
-
-st.subheader("現在セット スコアボード")
+my_pts, op_pts = (log["Winner"] == P).sum(), (log["Winner"] == O).sum()
+st.subheader("現在セット スコア")
 sc1, sc2, sc3 = st.columns(3)
-sc1.metric(P, my_pts)
-sc2.metric(O, opp_pts)
-last_server = current_log.iloc[-1]["Server"] if not current_log.empty else "-"
-sc3.markdown(f"サーブ: {last_server}")
+sc1.metric(P, my_pts); sc2.metric(O, op_pts); sc3.markdown(f"次サーブ: {st.session_state.current_server}")
 
-# ───────────────────────── セット一覧 ─────────────────────────
+if st.session_state.match_over:
+    st.success(f"セット終了 {P}:{my_pts} - {O}:{op_pts}")
+    b1, b2 = st.columns(2)
+    if b1.button("次セット開始"):
+        st.session_state.sets.append(new_set()); st.session_state.current_set +=1
+        st.session_state.current_server = P; st.session_state.serve_counter = 0; st.session_state.match_over = False
+        save_state(); safe_rerun()
+    if b2.button("終了"):
+        st.session_state.match_over = False
 
-st.subheader("セットスコア一覧")
-rows = []
-for idx, df_set in enumerate(st.session_state.sets, start=1):
-    rows.append({
-        "セット": idx,
-        P: int((df_set["Winner"] == P).sum()),
-        O: int((df_set["Winner"] == O).sum()),
-    })
-score_df = pd.DataFrame(rows)
-st.dataframe(score_df, hide_index=True, use_container_width=True)
+# ──────────────────── SET TABLE ────────────────────
 
-# ───────────────────────── 試合保存 ─────────────────────────
+if st.button("データをリセット", help="全試合と進行中データを削除"):
+    reset_all()
 
-save_c, _ = st.columns([1, 5])
-if save_c.button("試合を保存"):
-    if not any(len(df) for df in st.session_state.sets):
-        st.warning("試合データがありません")
-    else:
-        if len(st.session_state.saved_matches) == 5:
-            st.session_state.saved_matches.pop(0)
-        st.session_state.saved_matches.append({
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "player": P,
-            "opponent": O,
-            "sets": [df.copy() for df in st.session_state.sets],
-        })
-        # リセット
-        st.session_state.sets = [pd.DataFrame(columns=current_log.columns)]
-        st.session_state.current_set = 0
-        st.success("保存しました")
-        safe_rerun()
+st.subheader("セット一覧")
 
-if st.session_state.saved_matches:
-    st.subheader("保存済み試合")
-    for idx, match in enumerate(st.session_state.saved_matches, start=1):
-        total_p = sum((df["Winner"] == match["player"]).sum() for df in match["sets"])
-        total_o = sum((df["Winner"] == match["opponent"]).sum() for df in match["sets"])
-        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-        c1.markdown(f"{idx}. {match['date']} - {match['player']} vs {match['opponent']}")
-        c2.markdown(f"{total_p} - {total_o}")
-        if c3.button("閲覧", key=f"view{idx}"):
-            st.session_state.player_name = match["player"]
-            st.session_state.opponent_name = match["opponent"]
-            st.session_state.sets = [df.copy() for df in match["sets"]]
-            st.session_state.current_set = 0
-            safe_rerun()
-        if c4.button("削除", key=f"del{idx}"):
-            st.session_state.saved_matches.pop(idx-1)
-            safe_rerun()
 
-# ───────────────────────── 円グラフ ─────────────────────────
+rows = [{"セット": i+1, P: (df["Winner"]==P).sum(), O: (df["Winner"]==O).sum()} for i,df in enumerate(st.session_state.sets)]
+st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
-full_df = pd.concat(st.session_state.sets, ignore_index=True)
-if not full_df.empty:
-    def counts(flag):
-        series = (
-            full_df[full_df["Winner"] == flag]["Reason"].fillna("").astype(str).str.strip()
-        )
-        series = series[series != ""].value_counts()
-        if series.empty:
+# ──────────────────── CHARTS ────────────────────
+
+non_empty = [df for df in st.session_state.sets if not df.empty]
+if non_empty:
+    full_df = pd.concat(non_empty, ignore_index=True)
+
+    # ---------- ドーナツ ----------
+    def make_counts(flag):
+        sub = full_df[full_df["Winner"] == flag]
+        if sub.empty:
             return pd.DataFrame(columns=["Factor", "Points"])
-        df_counts = series.reset_index()
-        df_counts.columns = ["Factor", "Points"]
-        df_counts["Factor"] = df_counts["Factor"].astype(str)
-        df_counts["Points"] = df_counts["Points"].astype(int)
-        return df_counts
+        dfc = sub["Outcome"].value_counts().reset_index()
+        dfc.columns = ["Factor", "Points"]
+        return dfc
 
-    win_counts = counts(P)
-    lose_counts = counts(O)
+    win_df = make_counts(P)
+    lose_df = make_counts(O)
 
     st.subheader("得点源 / 失点源")
     cw, cl = st.columns(2)
-
-    if not win_counts.empty:
-        win_chart = (
-            alt.Chart(win_counts)
-            .mark_arc(innerRadius=40)
-            .encode(
-                theta="Points:Q",
-                color="Factor:N",
-                tooltip=["Factor", "Points"],
-            )
-            .properties(height=250)
-        )
+    if not win_df.empty:
         cw.markdown("得点源")
-        cw.altair_chart(win_chart, use_container_width=True)
-
-    if not lose_counts.empty:
-        lose_chart = (
-            alt.Chart(lose_counts)
-            .mark_arc(innerRadius=40)
-            .encode(
-                theta="Points:Q",
-                color="Factor:N",
-                tooltip=["Factor", "Points"],
-            )
-            .properties(height=250)
-        )
+        cw.altair_chart(alt.Chart(win_df).mark_arc(innerRadius=40).encode(theta="Points:Q", color="Factor:N"), use_container_width=True)
+    if not lose_df.empty:
         cl.markdown("失点源")
-        cl.altair_chart(lose_chart, use_container_width=True)
+        cl.altair_chart(alt.Chart(lose_df).mark_arc(innerRadius=40).encode(theta="Points:Q", color="Factor:N"), use_container_width=True)
+
+    # ---------- サーブタイプ別勝率 ----------
+    if "ServeType" in full_df.columns:
+        tot = full_df.groupby("ServeType").size()
+        win = full_df[full_df["Winner"] == P].groupby("ServeType").size()
+        win_rate_df = (win / tot).fillna(0).reset_index()
+        win_rate_df.columns = ["ServeType", "WinRate"]
+        if not win_rate_df.empty:
+            st.subheader("サーブタイプ別 勝率")
+            st.altair_chart(
+                alt.Chart(win_rate_df)
+                .mark_bar()
+                .encode(x=alt.X("WinRate:Q", axis=alt.Axis(format=".0%"), title="勝率"), y=alt.Y("ServeType:N", sort="-x"), tooltip=["ServeType", alt.Tooltip("WinRate:Q", format=".0%")]),
+                use_container_width=True,
+            )
+
+    # ---------- ヒートマップ ----------
+    if {"ServeType", "Outcome"}.issubset(full_df.columns):
+        pivot = full_df.pivot_table(index="ServeType", columns="Outcome", aggfunc="size", fill_value=0)
+        heat_df = pivot.reset_index().melt(id_vars="ServeType", var_name="Outcome", value_name="Count")
+        if not heat_df.empty:
+            st.subheader("サーブタイプ × 結果")
+            st.altair_chart(
+                alt.Chart(heat_df)
+                .mark_rect()
+                .encode(x="Outcome:N", y="ServeType:N", color=alt.Color("Count:Q", scale=alt.Scale(scheme="blues")), tooltip=["ServeType", "Outcome", "Count"]),
+                use_container_width=True,
+            )
+
+# ──────────────────── FOOTER ────────────────────
+
+st.caption("© 2025 TT Analyzer α版")
