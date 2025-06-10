@@ -216,26 +216,37 @@ if non_empty:
     for (df, title), col in [((win_df, "得点源"), cw), ((lose_df, "失点源"), cl)]:
         chart = (
             alt.Chart(df)
-            .mark_arc(innerRadius=50, outerRadius=90, cornerRadius=5, stroke="#333", strokeWidth=1)
-            .encode(
-                theta=alt.Theta("Points:Q"),
-                color=alt.Color("Factor:N", scale=alt.Scale(scheme="category10"), legend=None),
-                opacity=alt.condition(highlight, alt.value(1), alt.value(0.6)),
-                tooltip=[
-                    alt.Tooltip("Factor:N", title="要因"),
-                    alt.Tooltip("Points:Q", title="得点数"),
-                ],
-            )
-            .add_params(highlight)
+               .mark_arc(innerRadius=50, outerRadius=90, cornerRadius=5, stroke="#333", strokeWidth=1)
+               .encode(
+                   theta=alt.Theta("Points:Q"),
+                   color=alt.Color(
+                       "Factor:N",
+                       scale=alt.Scale(scheme="category10"),
+                       legend=alt.Legend(orient="right", title="要因", direction="vertical")
+                   ),
+                   opacity=alt.condition(highlight, alt.value(1), alt.value(0.6)),
+                   tooltip=[
+                       alt.Tooltip("Factor:N", title="要因"),
+                       alt.Tooltip("Points:Q", title="得点数"),
+                   ],
+               )
+               .add_params(highlight)
         )
         col.altair_chart(
             chart.properties(width=300, height=300, title=title),
             use_container_width=False
-        )  # ← ここで col.altair_chart を閉じる
+        )
+
+    # ─── ここまでが for ループ ─────────────────────────
 
     # ─── サーブ別ビュー切り替え ───────────────────────
     st.subheader("サーブ分析（サーバー別ビュー）")
-    view = st.radio("対象サーブを選択", ["自分サーブ", "相手サーブ"], horizontal=True, key="serve_view")
+    view = st.radio(
+        "対象サーブを選択",
+        ["自分サーブ", "相手サーブ"],
+        horizontal=True,
+        key="serve_view"
+    )
     target = P if view == "自分サーブ" else O
     df_view = full_df[full_df["Server"] == target]
 
@@ -261,11 +272,7 @@ if non_empty:
         )
         .add_params(highlight)
     )
-    st.subheader(f"サーブタイプ別 勝率（{view}）")
-    st.altair_chart(
-        bar.properties(width=600, height=400),
-        use_container_width=True
-    )  # ← ここで st.altair_chart を閉じる
+    st.altair_chart(bar.properties(width=600, height=400), use_container_width=True)
 
     # ——— サーブタイプ×結果 用データ準備 ———
     pivot = df_view.pivot_table(
@@ -292,11 +299,7 @@ if non_empty:
         )
         .add_params(highlight)
     )
-    st.subheader(f"サーブタイプ × 結果（{view}）")
-    st.altair_chart(
-        heat.properties(width=700, height=500),
-        use_container_width=True
-    )  # ← ここで st.altair_chart を閉じる
+    st.altair_chart(heat.properties(width=700, height=500), use_container_width=True)
 
 # ─────────────── FOOTER ───────────────
 st.caption("© 2025 TT Analyzer α版")
