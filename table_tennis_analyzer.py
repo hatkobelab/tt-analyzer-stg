@@ -111,7 +111,7 @@ if st.session_state.get("reset_prompt"):
     if cR2.button("いいえ、保持", key="cancel_reset"):
         st.session_state.pop("reset_prompt"); save_state(); safe_rerun()
 
-st.title("TT Analyzer α版")
+st.subheader("TT Analyzer α版")
 ht1, ht2 = st.columns([1,1])
 ht1.markdown(f"**現在セット:** {st.session_state.current_set+1}")
 if ht2.button("新しいセット"):    
@@ -161,28 +161,41 @@ out_opts = OUT_SERVER if selected_server == P else OUT_RECEIVE
 st.radio("結果を選択", ["--"] + out_opts, horizontal=True, key="outcome_radio", on_change=register_rally)
 
 # ─────────────── SCOREBOARD ───────────────
+
+# ① まずログ（現在セットのラリー履歴）を取得
 log = st.session_state.sets[st.session_state.current_set]
-my_pts, op_pts = (log["Winner"] == P).sum(), (log["Winner"] == O).sum()
+
+# ② 現在の得点を計算
+my_pts = (log["Winner"] == P).sum()
+op_pts = (log["Winner"] == O).sum()
+
+# ③ 見出し
 st.subheader("現在セット スコア")
-s1, s2, s3 = st.columns(3)
-s1.metric(P, my_pts);
-s2.metric(O, op_pts);
-s3.markdown(f"次サーブ: {st.session_state.current_server}")
+
+# ④ セット終了ダイアログ＋ボタンを見出し直下に配置
 if st.session_state.match_over:
     st.success(f"セット終了 {P}:{my_pts} - {O}:{op_pts}")
-    b1, b2 = st.columns(2)
-    if b1.button("次セット開始"):    
+    c1, c2 = st.columns(2)
+    if c1.button("次セット開始"):
+        # 新しいセット開始の処理
         st.session_state.sets.append(new_set())
         st.session_state.current_set += 1
         st.session_state.current_server = P
         st.session_state.serve_counter = 0
         st.session_state.match_over = False
         save_state(); safe_rerun()
-    if b2.button("終了"): st.session_state.match_over = False
+    if c2.button("終了"):
+        st.session_state.match_over = False
+
+# ⑤ スコアメトリクスをその下に
+s1, s2, s3 = st.columns(3)
+s1.metric(P, my_pts)
+s2.metric(O, op_pts)
+s3.markdown(f"次サーブ: {st.session_state.current_server}")
 
 # ─────────────── RESET BUTTON & SET TABLE ───────────────
 if st.button("データをリセット", help="全データをクリアします"): reset_all()
-st.subheader("セット一覧")
+st.markdown("##### セット一覧")
 rows = [{"セット": i+1, P: (df["Winner"] == P).sum(), O: (df["Winner"] == O).sum()} for i, df in enumerate(st.session_state.sets)]
 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
@@ -211,36 +224,47 @@ if non_empty:
     )
 
     # ─── 得点源／失点源ドーナツ ───────────────────────
-    st.subheader("得点源 / 失点源")
+    st.markdown("##### 得点源 / 失点源")
     cw, cl = st.columns(2)
+
     for (df, title), col in [((win_df, "得点源"), cw), ((lose_df, "失点源"), cl)]:
         chart = (
             alt.Chart(df)
-               .mark_arc(innerRadius=50, outerRadius=90, cornerRadius=5, stroke="#333", strokeWidth=1)
-               .encode(
-                   theta=alt.Theta("Points:Q"),
-                   color=alt.Color(
-                       "Factor:N",
-                       scale=alt.Scale(scheme="category10"),
-                       legend=alt.Legend(orient="right", title="要因", direction="vertical")
-                   ),
-                   opacity=alt.condition(highlight, alt.value(1), alt.value(0.6)),
-                   tooltip=[
-                       alt.Tooltip("Factor:N", title="要因"),
-                       alt.Tooltip("Points:Q", title="得点数"),
-                   ],
-               )
-               .add_params(highlight)
+            .mark_arc(
+                innerRadius=50,
+                outerRadius=90,
+                cornerRadius=5,
+                stroke="#333",
+                strokeWidth=1
+            )
+            .encode(
+                theta=alt.Theta("Points:Q"),
+                color=alt.Color(
+                    "Factor:N",
+                    scale=alt.Scale(scheme="category10"),
+                    legend=alt.Legend(
+                        orient="right",        # 右側に配置
+                        title="要因",
+                        direction="vertical",
+                        offset=10             # 本体から少し離す
+                    )
+                ),
+                opacity=alt.condition(highlight, alt.value(1), alt.value(0.6)),
+                tooltip=[
+                    alt.Tooltip("Factor:N", title="要因"),
+                    alt.Tooltip("Points:Q", title="得点数"),
+                ],
+            )
+            .add_params(highlight)
+            # ← ここで幅を広げる
+            .properties(width=350, height=300)
         )
-        col.altair_chart(
-            chart.properties(width=300, height=300, title=title),
-            use_container_width=False
-        )
+        col.altair_chart(chart, use_container_width=False)
 
     # ─── ここまでが for ループ ─────────────────────────
 
     # ─── サーブ別ビュー切り替え ───────────────────────
-    st.subheader("サーブ分析（サーバー別ビュー）")
+    st.markdown("##### サーブ分析（サーバー別ビュー）")
     view = st.radio(
         "対象サーブを選択",
         ["自分サーブ", "相手サーブ"],
@@ -273,7 +297,6 @@ if non_empty:
         .add_params(highlight)
     )
     st.altair_chart(bar.properties(width=600, height=400), use_container_width=True)
-
     # ——— サーブタイプ×結果 用データ準備 ———
     pivot = df_view.pivot_table(
         index="ServeType", columns="Outcome", aggfunc="size", fill_value=0
