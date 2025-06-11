@@ -170,7 +170,7 @@ my_pts = (log["Winner"] == P).sum()
 op_pts = (log["Winner"] == O).sum()
 
 # ③ 見出し
-st.subheader("現在セット スコア")
+st.markdown("##### 現在セットスコア")
 
 # ④ セット終了ダイアログ＋ボタンを見出し直下に配置
 if st.session_state.match_over:
