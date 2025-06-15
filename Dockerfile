@@ -9,3 +9,6 @@ CMD ["streamlit", "run", "table_tennis_analyzer.py",
      "--server.port", "8080",
      "--server.address", "0.0.0.0",
      "--server.headless", "true"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+CMD ["/entrypoint.sh"]
