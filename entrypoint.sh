@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# 環境変数から secrets.toml を生成
+# 変数 STREAMLIT_SECRETS の \n を実際の改行に展開して書き込む
 mkdir -p /app/.streamlit
-echo "$STREAMLIT_SECRETS" > /app/.streamlit/secrets.toml
+printf '%b' "$STREAMLIT_SECRETS" > /app/.streamlit/secrets.toml
 
-# Streamlit を起動
+# Streamlit アプリを起動
 streamlit run table_tennis_analyzer.py \
-    --server.port 8080 \
-    --server.address 0.0.0.0 \
-    --server.headless true
+  --server.port 8080 \
+  --server.address 0.0.0.0 \
+  --server.headless true
