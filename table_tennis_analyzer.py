@@ -15,13 +15,13 @@ from firebase_admin import credentials, firestore
 # --- Firebase 初期化 ---
 SERVICE_ACCOUNT = Path(__file__).with_name("myapp-firebase-adminsdk.json")
 
-if SERVICE_ACCOUNT.exists():
-    # ローカル用：鍵ファイルで初期化
-    cred = credentials.Certificate(str(SERVICE_ACCOUNT))
-    firebase_admin.initialize_app(cred)
-else:
-    # Cloud Runなど鍵ファイルなしの環境：ADCを利用
-    firebase_admin.initialize_app()
+if not firebase_admin._apps:
+    if SERVICE_ACCOUNT.exists():
+        cred = credentials.Certificate(str(SERVICE_ACCOUNT))
+        firebase_admin.initialize_app(cred)
+    else:
+        firebase_admin.initialize_app()   # Cloud Run は ADC
+
 db = firestore.client()
 
 # --- 定数 ---
