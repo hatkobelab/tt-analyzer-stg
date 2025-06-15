@@ -30,7 +30,10 @@ RESET_KEYS = ["sets", "current_set", "saved_matches", "current_server", "serve_c
 
 # --- Firestore関係 ---
 def _user_logged_in() -> bool:
-    return getattr(st, "user", None) is not None and st.user.is_logged_in
+    try:
+        return bool(st.user and getattr(st.user, "sub", None))
+    except Exception:
+        return False
 
 def _fs_doc():
     return db.collection("users").document(st.user.sub)
