@@ -7,10 +7,9 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
-ENV PORT 8080
-ENV STREAMLIT_SECRETS_PATH="/app/.streamlit/secrets.toml"
+# PORTのみ指定
+ENV PORT=8080
 
-# スクリプトを起動エントリポイントとして使う
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
