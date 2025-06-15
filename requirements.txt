@@ -1,3 +1,6 @@
-streamlit
+streamlit==1.45.0
 pandas
 altair
+firebase-admin
+google-cloud-firestore
+authlib         # st.login が内部で使用
