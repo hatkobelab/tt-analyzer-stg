@@ -1,15 +1,12 @@
 #!/bin/bash
-echo "=== DEBUG: /etc/secrets ==="
-ls -al /etc/secrets
-cat /etc/secrets/streamlit-secrets || echo "No streamlit-secrets file"
-echo "=== /app/.streamlit ==="
-mkdir -p /app/.streamlit
-cp /etc/secrets/streamlit-secrets /app/.streamlit/secrets.toml
-ls -al /app/.streamlit
-cat /app/.streamlit/secrets.toml || echo "No secrets.toml file"
+# デバッグ用: きちんとファイルがあるか確認
+echo "=== DEBUG /etc/secrets ==="
+ls -l /etc/secrets || true
+echo "=== DEBUG /app/.streamlit ==="
+ls -l /app/.streamlit || true
 echo "=== END DEBUG ==="
 
 exec streamlit run table_tennis_analyzer.py \
-  --server.port 8080 \
-  --server.address 0.0.0.0 \
-  --server.headless true
+     --server.port ${PORT:-8080} \
+     --server.address 0.0.0.0 \
+     --server.headless true
