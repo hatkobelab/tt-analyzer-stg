@@ -1,5 +1,0 @@
-[secrets]
-files = "/etc/secrets/streamlit-secrets"
-
-[auth]
-cookie_same_site = "Lax"
