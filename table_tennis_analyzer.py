@@ -11,6 +11,7 @@ import pandas as pd
 import altair as alt
 import firebase_admin
 from firebase_admin import credentials, firestore
+st.auth_config(cookie_same_site="Lax")   # ← 追加
 
 # --- Firebase 初期化 ---
 SERVICE_ACCOUNT = Path(__file__).with_name("myapp-firebase-adminsdk.json")
