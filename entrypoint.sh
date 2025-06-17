@@ -8,3 +8,8 @@ exec streamlit run table_tennis_analyzer.py \
      --server.port ${PORT:-8080} \
      --server.address 0.0.0.0 \
      --server.headless true
+
+echo "---- /etc/secrets/streamlit-secrets 内容 ----"
+cat /etc/secrets/streamlit-secrets || echo "(読み込み失敗)"
+echo "---- /app/.streamlit/secrets.toml 内容 ----"
+cat /app/.streamlit/secrets.toml || echo "(コピー失敗)"
