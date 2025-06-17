@@ -159,15 +159,25 @@ if ht2.button("新しいセット"):
 # --- 入力セクション ---
 def register_rally():
     selected_server = st.session_state.server_radio
-    serve_type = st.session_state.serve_type_radio
-    selected_out = st.session_state.outcome_radio
+    serve_type      = st.session_state.serve_type_radio
+    selected_out    = st.session_state.outcome_radio
     if selected_out == "--":
         return
+
     log = st.session_state.sets[st.session_state.current_set]
-    P = st.session_state.player_name
-    O = st.session_state.opponent_name
-    winner = P if ((selected_server == P and selected_out in WIN_SERVER) or (selected_server == O and selected_out in WIN_RECEIVE)) else O
-    next_id = (log["Rally"].max() or 0) + 1
+    P, O = st.session_state.player_name, st.session_state.opponent_name
+    winner = (
+        P
+        if ((selected_server == P and selected_out in WIN_SERVER) 
+             or (selected_server == O and selected_out in WIN_RECEIVE))
+        else O
+    )
+
+    # Rally列を数値化して最大IDを算出
+    ids    = pd.to_numeric(log["Rally"], errors="coerce")
+    max_id = int(ids.max()) if (not ids.empty and not pd.isna(ids.max())) else 0
+    next_id = max_id + 1
+
     log.loc[len(log)] = [next_id, selected_server, winner, serve_type, selected_out]
     st.session_state.serve_counter = (st.session_state.serve_counter + 1) % 2
     if st.session_state.serve_counter == 0:
