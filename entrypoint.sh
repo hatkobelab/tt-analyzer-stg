@@ -1,15 +1,6 @@
 #!/bin/bash
-mkdir -p /app/.streamlit
-
-# Cloud Run の Secret ボリュームが /etc/secrets/streamlit-secrets にある前提
-cp /etc/secrets/streamlit-secrets /app/.streamlit/secrets.toml
-
+# もはや /app/.streamlit へのコピーは不要
 exec streamlit run table_tennis_analyzer.py \
-     --server.port ${PORT:-8080} \
+     --server.port "${PORT:-8080}" \
      --server.address 0.0.0.0 \
      --server.headless true
-
-echo "---- /etc/secrets/streamlit-secrets 内容 ----"
-cat /etc/secrets/streamlit-secrets || echo "(読み込み失敗)"
-echo "---- /app/.streamlit/secrets.toml 内容 ----"
-cat /app/.streamlit/secrets.toml || echo "(コピー失敗)"
