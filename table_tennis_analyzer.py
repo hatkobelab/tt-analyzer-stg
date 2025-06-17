@@ -90,6 +90,16 @@ else:
         st.logout()
         safe_rerun()
 
+# --- セッション初期化 ---
+def new_set():
+    return pd.DataFrame(columns=["Rally", "Server", "Winner", "ServeType", "Outcome"])
+st.session_state.setdefault("sets", [new_set()])
+st.session_state.setdefault("current_set", 0)
+st.session_state.setdefault("saved_matches", [])
+st.session_state.setdefault("current_server", st.session_state.get("player_name", "選手A"))
+st.session_state.setdefault("serve_counter", 0)
+st.session_state.setdefault("match_over", False)
+
 # --- Firestore復元後に必ず呼ぶ関数を追加 ---
 def ensure_columns():
     """すべてのセットDFに必須列を追加（復元で欠ける場合用）"""
@@ -122,16 +132,6 @@ with st.expander("選手設定", expanded=(st.session_state.player_name == "選�
 
 P, O = st.session_state.player_name, st.session_state.opponent_name
 players = [P, O]
-
-# --- セッション初期化 ---
-def new_set():
-    return pd.DataFrame(columns=["Rally", "Server", "Winner", "ServeType", "Outcome"])
-st.session_state.setdefault("sets", [new_set()])
-st.session_state.setdefault("current_set", 0)
-st.session_state.setdefault("saved_matches", [])
-st.session_state.setdefault("current_server", P)
-st.session_state.setdefault("serve_counter", 0)
-st.session_state.setdefault("match_over", False)
 
 SERVE_TYPES = [
     "順回転サーブ（横/上/ナックル）", "順回転サーブ（下回転系）",
