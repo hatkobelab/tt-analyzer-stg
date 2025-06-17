@@ -90,9 +90,17 @@ else:
         st.logout()
         safe_rerun()
 
+# --- Firestore復元後に必ず呼ぶ関数を追加 ---
+def ensure_columns():
+    """すべてのセットDFに必須列を追加（復元で欠ける場合用）"""
+    cols = ["Rally", "Server", "Winner", "ServeType", "Outcome"]
+    for i, df in enumerate(st.session_state.sets):
+        st.session_state.sets[i] = df.reindex(columns=cols)
+
 # --- 初回のみstate読み込み ---
 if not st.session_state.get("_loaded", False):
     load_state()
+    ensure_columns()
     st.session_state["_loaded"] = True
 
 # --- プレイヤー名 ---
