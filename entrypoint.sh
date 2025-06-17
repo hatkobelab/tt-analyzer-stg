@@ -1,12 +1,23 @@
 #!/bin/bash
 set -e
-echo "== DEBUG: config & secrets =="
-cat /app/.streamlit/config.toml || echo "config.toml not found"
-ls -l /etc/secrets || true
-echo "== /DEBUG =="
+
+mkdir -p /app/.streamlit
+
+# Secretが安定してコピーできるまでリトライ
+for i in {1..10}; do
+  cp /etc/secrets/streamlit-secrets /app/.streamlit/secrets.toml 2>/dev/null && break
+  echo "[WARN] Secret file not ready yet, retrying ($i/10)..."
+  sleep 0.5
+done
+
+# コピーできてなければ fatal
+if [ ! -f /app/.streamlit/secrets.toml ]; then
+  echo "[FATAL] Secret file copy failed, exiting"
+  ls -al /etc/secrets
+  exit 1
+fi
 
 exec streamlit run table_tennis_analyzer.py \
-     --logger.level debug \
      --server.port "${PORT:-8080}" \
      --server.address 0.0.0.0 \
      --server.headless true
