@@ -1,0 +1,29 @@
+steps:
+# ① Secret を環境変数に展開
+- id: 'prep'
+  name: gcr.io/cloud-builders/gcloud
+  entrypoint: bash
+  args:
+    - '-c'
+    - |
+      mkdir tmp
+      echo "$$STREAMLIT_SECRET" > tmp/secrets.toml
+  secretEnv: ['STREAMLIT_SECRET']
+
+# ② Docker build。build-arg で TOML を渡す
+- id: 'build'
+  name: gcr.io/cloud-builders/docker
+  args:
+    [
+      'build',
+      '--build-arg','TOML_FILE=tmp/secrets.toml',
+      '-t','gcr.io/$PROJECT_ID/tt-analyzer:$SHORT_SHA',
+      '.'
+    ]
+
+images:
+- 'gcr.io/$PROJECT_ID/tt-analyzer:$SHORT_SHA'
+
+secrets:
+- secretEnv:
+    STREAMLIT_SECRET: projects/$PROJECT_ID/secrets/streamlit-secrets-build/versions/latest
