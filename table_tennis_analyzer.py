@@ -236,6 +236,15 @@ st.markdown("##### セット一覧")
 rows = [{"セット": i+1, P: (df["Winner"] == P).sum(), O: (df["Winner"] == O).sum()} for i, df in enumerate(st.session_state.sets)]
 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
+# ① フルデータ取得ヘルパー（どこか上部で１回定義）
+def get_full_df():
+    dfs = [
+        df.assign(Set=i+1)
+        for i, df in enumerate(st.session_state.sets)
+        if not df.empty
+    ]
+    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
 # --- チャート ---
 non_empty = [df for df in st.session_state.sets if not df.empty]
 if non_empty:
@@ -306,5 +315,20 @@ if non_empty:
         ).add_params(highlight)
     )
     st.altair_chart(heat.properties(width=700, height=500), use_container_width=True)
+
+    # ─── CSVダウンロードボタン ───────────
+    df_all = get_full_df()
+    if not df_all.empty:
+        csv_bytes = df_all.to_csv(index=False).encode("utf-8")
+        ts = pd.Timestamp.now(tz="Asia/Tokyo").strftime("%Y%m%d_%H%M")
+        fname = f"TTAnalyzer_{ts}.csv"
+
+        st.download_button(
+            label="📥 分析データをCSVでダウンロード",
+            data=csv_bytes,
+            file_name=fname,
+            mime="text/csv",
+            help="全セット結合＋Set列付きのCSVを出力します"
+        )
 
 st.caption("© 2025 TT Analyzer α版")
