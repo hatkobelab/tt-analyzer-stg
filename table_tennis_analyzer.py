@@ -319,12 +319,14 @@ if non_empty:
     # ─── CSVダウンロードボタン ───────────
     df_all = get_full_df()
     if not df_all.empty:
-        csv_bytes = df_all.to_csv(index=False).encode("utf-8")
+        csv_str   = df_all.to_csv(index=False, encoding="utf-8-sig")
+        csv_bytes = csv_str.encode("utf-8-sig")
+        
         ts = pd.Timestamp.now(tz="Asia/Tokyo").strftime("%Y%m%d_%H%M")
         fname = f"TTAnalyzer_{ts}.csv"
 
         st.download_button(
-            label="📥 分析データをCSVでダウンロード",
+            label="分析データをCSVでダウンロード",
             data=csv_bytes,
             file_name=fname,
             mime="text/csv",
