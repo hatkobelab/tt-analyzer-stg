@@ -9,6 +9,8 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 import altair as alt
+import google.generativeai as genai
+genai.configure(api_key=st.secrets["gemini"]["api_key"])
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -106,6 +108,16 @@ def ensure_columns():
     cols = ["Rally", "Server", "Winner", "ServeType", "Outcome"]
     for i, df in enumerate(st.session_state.sets):
         st.session_state.sets[i] = df.reindex(columns=cols)
+
+# ─────── ここから全データ取得ヘルパ ───────
+def get_full_df():
+    dfs = [
+        df.assign(Set=i+1)
+        for i, df in enumerate(st.session_state.sets)
+        if not df.empty
+    ]
+    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+# ──────────────────────────────────────────
 
 # --- 初回のみstate読み込み ---
 if not st.session_state.get("_loaded", False):
@@ -332,5 +344,24 @@ if non_empty:
             mime="text/csv",
             help="全セット結合＋Set列付きのCSVを出力します"
         )
+
+     # ─── ここからAI分析ボタン ───────────
+    if st.button("🤖 データを分析する"):
+        with st.spinner("AIで分析中…"):
+            prompt = (
+                "卓球のラリー別データです。"
+                f"{st.session_state.player_name}の改善ポイントを箇条書きにしてください。\n\n"
+                "データ:\n" + df_all.to_csv(index=False)
+            )
+            chat = genai.chat.create(
+                model="models/chat-bison-001",
+                prompt=[{"author":"user","content":prompt}],
+            )
+            st.session_state.analysis_result = chat.last.response
+
+    if st.session_state.get("analysis_result"):
+        st.markdown("##### 📝 AIによる改善ポイント")
+        st.write(st.session_state.analysis_result)
+     # ─────────────────────────────────────────
 
 st.caption("© 2025 TT Analyzer α版")
