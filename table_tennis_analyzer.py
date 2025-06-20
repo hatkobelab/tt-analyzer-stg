@@ -345,20 +345,24 @@ if non_empty:
             help="全セット結合＋Set列付きのCSVを出力します"
         )
 
-     # ─── ここからAI分析ボタン ───────────
+    # --- AI 分析ボタン ------------------------------------------------
     if st.button("🤖 データを分析する"):
         with st.spinner("AIで分析中…"):
+            # ① プロンプト生成
             prompt = (
-                "卓球のラリー別データです。"
-                f"{st.session_state.player_name}の改善ポイントを箇条書きにしてください。\n\n"
-                "データ:\n" + df_all.to_csv(index=False)
+                "あなたは卓球コーチです。\n"
+                f"次の CSV は {st.session_state.player_name}（指導選手）のラリー別データです。\n"
+                "改善ポイントを 5〜7 つ、日本語で箇条書きしてください。\n\n"
+                + df_all.to_csv(index=False)
             )
-            chat = genai.chat.create(
-                model="models/chat-bison-001",
-                prompt=[{"author":"user","content":prompt}],
-            )
-            st.session_state.analysis_result = chat.last.response
-
+    
+            # ② Gemini Flash を呼び出し
+            model = genai.GenerativeModel("gemini-2.0-flash")   # ← モデル名だけで OK
+            response = model.generate_content(prompt)
+    
+            # ③ 生成テキストをセッションに保存
+            st.session_state.analysis_result = response.text
+    # -----------------------------------------------------------------
     if st.session_state.get("analysis_result"):
         st.markdown("##### 📝 AIによる改善ポイント")
         st.write(st.session_state.analysis_result)
