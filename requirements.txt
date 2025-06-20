@@ -4,4 +4,4 @@ altair
 firebase-admin
 google-cloud-firestore
 authlib         # st.login が内部で使用
-google-generative-ai
+google-generativeai
