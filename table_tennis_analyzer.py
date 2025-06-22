@@ -1,155 +1,137 @@
-"""
-TT Analyzer α版 – モバイル高速入力 (Firebase対応・Googleログイン)
----------------------------------------
-・Google認証＋Firestore保存でマルチユーザー化
-・未ログイン時はセッションのみ(ブラウザ閉じると消える)
-"""
-
 from pathlib import Path
+import os
 import streamlit as st
 import pandas as pd
 import altair as alt
 import google.generativeai as genai
-genai.configure(api_key=st.secrets["gemini"]["api_key"])
-import os
 
+# ── Configuration ───────────────────────────────────────────────────────────
 st.set_page_config(page_title="TT Analyzer α版", layout="centered", initial_sidebar_state="collapsed")
+genai.configure(api_key=st.secrets["gemini"]["api_key"])
 IS_STAGING = os.getenv("STAGING", "").lower() in ("1", "true", "yes")
 
 if not IS_STAGING:
     import firebase_admin
     from firebase_admin import credentials, firestore
 
-    # --- Firebase 初期化（本番のみ）---
     SERVICE_ACCOUNT = Path(__file__).with_name("myapp-firebase-adminsdk.json")
     if not firebase_admin._apps:
         if SERVICE_ACCOUNT.exists():
             cred = credentials.Certificate(str(SERVICE_ACCOUNT))
             firebase_admin.initialize_app(cred)
         else:
-            firebase_admin.initialize_app()   # Cloud Run は ADC
+            firebase_admin.initialize_app()  # Cloud Run ADC
 
     db = firestore.client()
 else:
-    # ステージングでは Firestore は使わない
     db = None
     st.sidebar.warning("⚠️ これはステージング環境です。Firestore はオフになっています。")
 
-# --- 定数 ---
-WIDGET_KEYS = {"save_names", "server_radio", "serve_type_radio", "outcome_radio", "confirm_reset", "cancel_reset"}
-RESET_KEYS = ["sets", "current_set", "saved_matches", "current_server", "serve_counter", "match_over", "outcome_radio", "reset_prompt"]
-
-# --- Firestore関係 ---
+# ── Firestore State Helpers ─────────────────────────────────────────────────
 def _user_logged_in() -> bool:
-    try:
-        return bool(st.user and getattr(st.user, "sub", None))
-    except Exception:
-        return False
+    try: return bool(st.user and getattr(st.user, "sub", None))
+    except: return False
 
 def _fs_doc():
     return db.collection("users").document(st.user.sub)
 
 def _serialize_state() -> dict:
-    data = {k: v for k, v in st.session_state.items() if k not in WIDGET_KEYS and not k.startswith("_")}
+    data = {
+        k: v
+        for k, v in st.session_state.items()
+        if not k.startswith("_") and k not in {"server_radio", "serve_type_radio", "outcome_radio"}
+    }
     if "sets" in data:
-        data["sets"] = {str(idx): df.to_dict("records") for idx, df in enumerate(data["sets"])}
+        data["sets"] = {
+            str(i): df.to_dict("records")
+            for i, df in enumerate(data["sets"])
+        }
     return data
 
-def _deserialize_state(data: dict):
-    if "sets" in data:
-        sets_map = data.pop("sets")
-        data["sets"] = [pd.DataFrame(sets_map[key]) for key in sorted(sets_map, key=lambda x: int(x))]
-    st.session_state.update(data)
+def _deserialize_state(payload: dict):
+    if "sets" in payload:
+        sets_map = payload.pop("sets")
+        payload["sets"] = [
+            pd.DataFrame(sets_map[k]) for k in sorted(sets_map, key=lambda x: int(x))
+        ]
+    st.session_state.update(payload)
 
 def load_state():
     if not IS_STAGING and _user_logged_in():
         snap = _fs_doc().get()
         if snap.exists:
-            try:
-                _deserialize_state(snap.to_dict())
-            except Exception:
-                pass
+            _deserialize_state(snap.to_dict())
 
 def save_state():
-    # 本番かつログイン済みなら Firestore に保存
     if not IS_STAGING and _user_logged_in():
         _fs_doc().set(_serialize_state())
 
-def safe_rerun():
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:
-        safe_rerun()
-
 def reset_all():
-    for k in RESET_KEYS:
-        st.session_state.pop(k, None)
-    if _user_logged_in():
+    for k in list(st.session_state.keys()):
+        if not k.startswith("_"):
+            st.session_state.pop(k, None)
+    if not IS_STAGING and _user_logged_in():
         _fs_doc().delete()
     st.toast("データをリセットしました", icon="🗑️")
-    safe_rerun()
+    st.experimental_rerun()
 
-# --- 認証UI ---
-st.sidebar.title("ユーザー")
-if not _user_logged_in():
-    st.sidebar.info("Googleでログインするとデータがクラウド保存されます。")
-    if st.sidebar.button("Googleでログイン"):
-        st.login()
-else:
-    st.sidebar.success(f"ログイン中: {st.user.name}")
-    if st.sidebar.button("ログアウト"):
-        st.logout()
-        safe_rerun()
+# ── Authentication UI ───────────────────────────────────────────────────────
+if not IS_STAGING:
+    st.sidebar.title("ユーザー")
+    if _user_logged_in():
+        st.sidebar.success(f"ログイン中: {st.user.name}")
+        if st.sidebar.button("ログアウト"):
+            st.logout()
+            st.experimental_rerun()
+    else:
+        st.sidebar.info("Googleでログインするとデータがクラウド保存されます。")
+        if st.sidebar.button("Googleでログイン"):
+            st.login()
 
-# --- セッション初期化 ---
+# ── Session Defaults ─────────────────────────────────────────────────────────
 def new_set():
     return pd.DataFrame(columns=["Rally", "Server", "Winner", "ServeType", "Outcome"])
+
 st.session_state.setdefault("sets", [new_set()])
 st.session_state.setdefault("current_set", 0)
-st.session_state.setdefault("saved_matches", [])
 st.session_state.setdefault("current_server", st.session_state.get("player_name", "選手A"))
 st.session_state.setdefault("serve_counter", 0)
 st.session_state.setdefault("match_over", False)
 
-# --- Firestore復元後に必ず呼ぶ関数を追加 ---
+# ── Helpers ─────────────────────────────────────────────────────────────────
 def ensure_columns():
-    """すべてのセットDFに必須列を追加（復元で欠ける場合用）"""
     cols = ["Rally", "Server", "Winner", "ServeType", "Outcome"]
-    for i, df in enumerate(st.session_state.sets):
-        st.session_state.sets[i] = df.reindex(columns=cols)
+    st.session_state.sets = [
+        df.reindex(columns=cols) for df in st.session_state.sets
+    ]
 
-# ─────── ここから全データ取得ヘルパ ───────
 def get_full_df():
     dfs = [
-        df.assign(Set=i+1)
+        df.assign(Set=i + 1)
         for i, df in enumerate(st.session_state.sets)
         if not df.empty
     ]
     return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-# ──────────────────────────────────────────
 
-# --- 初回のみstate読み込み ---
+# 初回ロード
 if not st.session_state.get("_loaded", False):
     load_state()
     ensure_columns()
-    st.session_state["_loaded"] = True
+    st.session_state._loaded = True
 
-# --- プレイヤー名 ---
+# ── Player Settings ─────────────────────────────────────────────────────────
 st.session_state.setdefault("player_name", "選手A")
 st.session_state.setdefault("opponent_name", "対戦相手")
 with st.expander("選手設定", expanded=(st.session_state.player_name == "選手A")):
-    ip_p = st.text_input("自分側（指導選手）", st.session_state.player_name)
-    ip_o = st.text_input("相手側", st.session_state.opponent_name)
+    name_p = st.text_input("自分側（指導選手）", st.session_state.player_name)
+    name_o = st.text_input("相手側",     st.session_state.opponent_name)
     if st.button("保存", key="save_names"):
-        names_changed = (ip_p.strip() or "選手A") != st.session_state.player_name or (ip_o.strip() or "対戦相手") != st.session_state.opponent_name
-        st.session_state.player_name = ip_p.strip() or "選手A"
-        st.session_state.opponent_name = ip_o.strip() or "対戦相手"
-        if st.session_state.get("current_server") not in {st.session_state.player_name, st.session_state.opponent_name}:
-            st.session_state.current_server = st.session_state.player_name
-            st.session_state.serve_counter = 0
-        if names_changed and any(len(df) for df in st.session_state.get("sets", [])):
-            st.session_state.reset_prompt = True
-        save_state(); safe_rerun()
+        st.session_state.player_name   = name_p.strip() or "選手A"
+        st.session_state.opponent_name = name_o.strip() or "対戦相手"
+        st.session_state.current_server = st.session_state.player_name
+        st.session_state.serve_counter   = 0
+        save_state()
+        st.experimental_rerun()
 
 P, O = st.session_state.player_name, st.session_state.opponent_name
 players = [P, O]
@@ -159,222 +141,119 @@ SERVE_TYPES = [
     "バックハンドサーブ（横/上/ナックル）", "バックハンドサーブ（下回転系）",
     "巻き込みサーブ（横/上/ナックル）", "巻き込みサーブ（下回転系）",
     "しゃがみ込みサーブ（横/上/ナックル）", "しゃがみ込みサーブ（下回転系）",
-    "YGサーブ（横/上/ナックル）", "YGサーブ（下回転系）",
+    "YGサーブ（横/上/ナックル）",     "YGサーブ（下回転系）",
 ]
-OUT_SERVER = ["サービスエース", "3球目攻撃", "ラリー得点", "サーブミス", "ラリー失点", "その他得点", "その他失点"]
+OUT_SERVER  = ["サービスエース", "3球目攻撃", "ラリー得点", "サーブミス", "ラリー失点", "その他得点", "その他失点"]
 OUT_RECEIVE = ["レシーブエース", "ラリー得点", "レシーブミス", "ラリー失点", "その他得点", "その他失点"]
-WIN_SERVER = {"サービスエース", "3球目攻撃", "ラリー得点", "その他得点"}
+WIN_SERVER  = {"サービスエース", "3球目攻撃", "ラリー得点", "その他得点"}
 WIN_RECEIVE = {"レシーブエース", "ラリー得点", "その他得点"}
 
-# --- セット切替・リセット ---
-if st.session_state.get("reset_prompt"):
-    st.warning("選手名を変更しました。既存データをリセットしますか？")
-    cR1, cR2 = st.columns(2)
-    if cR1.button("はい、リセット", key="confirm_reset"): reset_all()
-    if cR2.button("いいえ、保持", key="cancel_reset"):
-        st.session_state.pop("reset_prompt"); save_state(); safe_rerun()
-
+# ── Main UI ─────────────────────────────────────────────────────────────────
 st.subheader("TT Analyzer α版")
-ht1, ht2 = st.columns([1,1])
-ht1.markdown(f"**現在セット:** {st.session_state.current_set+1}")
-if ht2.button("新しいセット"):
+
+# セット切替
+cs, ns = st.columns([1,1])
+cs.markdown(f"**現在セット:** {st.session_state.current_set+1}")
+if ns.button("新しいセット"):
     st.session_state.sets.append(new_set())
     st.session_state.current_set += 1
     st.session_state.current_server = P
-    st.session_state.serve_counter = 0
-    st.session_state.match_over = False
-    save_state(); safe_rerun()
+    st.session_state.serve_counter   = 0
+    st.session_state.match_over      = False
+    save_state()
+    st.experimental_rerun()
 
-# --- 入力セクション ---
+# ラリー登録
 def register_rally():
-    selected_server = st.session_state.server_radio
-    serve_type      = st.session_state.serve_type_radio
-    selected_out    = st.session_state.outcome_radio
-    if selected_out == "--":
-        return
+    srv    = st.session_state.server_radio
+    stype  = st.session_state.serve_type_radio
+    outcome = st.session_state.outcome_radio
+    if outcome == "--": return
 
-    log = st.session_state.sets[st.session_state.current_set]
-    P, O = st.session_state.player_name, st.session_state.opponent_name
+    df = st.session_state.sets[st.session_state.current_set]
     winner = (
-        P
-        if ((selected_server == P and selected_out in WIN_SERVER) 
-             or (selected_server == O and selected_out in WIN_RECEIVE))
+        P if ((srv == P and outcome in WIN_SERVER) or
+              (srv == O and outcome in WIN_RECEIVE))
         else O
     )
+    next_id = int(pd.to_numeric(df["Rally"], errors="coerce").max() or 0) + 1
+    df.loc[len(df)] = [next_id, srv, winner, stype, outcome]
 
-    # Rally列を数値化して最大IDを算出
-    ids    = pd.to_numeric(log["Rally"], errors="coerce")
-    max_id = int(ids.max()) if (not ids.empty and not pd.isna(ids.max())) else 0
-    next_id = max_id + 1
-
-    log.loc[len(log)] = [next_id, selected_server, winner, serve_type, selected_out]
+    # サーブ交代 & ゲーム終了判定
     st.session_state.serve_counter = (st.session_state.serve_counter + 1) % 2
     if st.session_state.serve_counter == 0:
-        st.session_state.current_server = O if st.session_state.current_server == P else P
-    my, op = (log["Winner"] == P).sum(), (log["Winner"] == O).sum()
-    if (my >= 11 or op >= 11) and abs(my - op) >= 2:
+        st.session_state.current_server = O if srv == P else P
+    p_pts = (df["Winner"] == P).sum()
+    o_pts = (df["Winner"] == O).sum()
+    if max(p_pts, o_pts) >= 11 and abs(p_pts - o_pts) >= 2:
         st.session_state.match_over = True
+
     st.toast(f"ラリー {next_id} 登録", icon="✅")
     save_state()
     st.session_state.outcome_radio = "--"
 
-col_srv, col_type = st.columns([1,2])
-idx_def = players.index(st.session_state.current_server) if st.session_state.current_server in players else 0
-selected_server = col_srv.radio("サーバー", players, index=idx_def, key="server_radio")
-if selected_server != st.session_state.current_server:
-    st.session_state.current_server = selected_server
-    st.session_state.serve_counter = 0
-serve_type = col_type.radio("サーブタイプ", SERVE_TYPES, key="serve_type_radio")
-out_opts = OUT_SERVER if selected_server == P else OUT_RECEIVE
-st.radio("結果を選択", ["--"] + out_opts, horizontal=True, key="outcome_radio", on_change=register_rally)
+c1, c2 = st.columns([1,2])
+idx = players.index(st.session_state.current_server)
+c1.radio("サーバー",     players, index=idx,       key="server_radio")
+c2.radio("サーブタイプ", SERVE_TYPES, key="serve_type_radio")
+st.radio(
+    "結果を選択",
+    ["--"] + (OUT_SERVER if st.session_state.server_radio == P else OUT_RECEIVE),
+    horizontal=True,
+    key="outcome_radio",
+    on_change=register_rally
+)
 
-# --- スコアボード ---
-log = st.session_state.sets[st.session_state.current_set]
-my_pts = (log["Winner"] == P).sum()
-op_pts = (log["Winner"] == O).sum()
+# スコアボード
+df = st.session_state.sets[st.session_state.current_set]
+p_pts, o_pts = (df["Winner"] == P).sum(), (df["Winner"] == O).sum()
 st.markdown("##### 現在セットスコア")
 if st.session_state.match_over:
-    st.success(f"セット終了 {P}:{my_pts} - {O}:{op_pts}")
-    c1, c2 = st.columns(2)
-    if c1.button("次セット開始"):
-        st.session_state.sets.append(new_set())
-        st.session_state.current_set += 1
-        st.session_state.current_server = P
-        st.session_state.serve_counter = 0
-        st.session_state.match_over = False
-        save_state(); safe_rerun()
-    if c2.button("終了"):
+    st.success(f"セット終了 {P}:{p_pts} - {O}:{o_pts}")
+    a1, a2 = st.columns(2)
+    if a1.button("次セット開始"):
+        st.experimental_rerun()
+    if a2.button("終了"):
         st.session_state.match_over = False
 
-s1, s2, s3 = st.columns(3)
-s1.metric(P, my_pts)
-s2.metric(O, op_pts)
-s3.markdown(f"次サーブ: {st.session_state.current_server}")
+m1, m2, m3 = st.columns(3)
+m1.metric(P, p_pts)
+m2.metric(O, o_pts)
+m3.markdown(f"次サーブ: {st.session_state.current_server}")
 
-# --- リセット＆セット一覧 ---
-if st.button("データをリセット", help="全データをクリアします"): reset_all()
-st.markdown("##### セット一覧")
-rows = [{"セット": i+1, P: (df["Winner"] == P).sum(), O: (df["Winner"] == O).sum()} for i, df in enumerate(st.session_state.sets)]
+# データリセット
+if st.button("データをリセット"):
+    reset_all()
+
+# セット一覧
+rows = [
+    {"セット": i+1, P: (df["Winner"]==P).sum(), O: (df["Winner"]==O).sum()}
+    for i, df in enumerate(st.session_state.sets)
+]
 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
-# ① フルデータ取得ヘルパー（どこか上部で１回定義）
-def get_full_df():
-    dfs = [
-        df.assign(Set=i+1)
-        for i, df in enumerate(st.session_state.sets)
-        if not df.empty
-    ]
-    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+# チャート
+full = get_full_df()
+if not full.empty:
+    # 得点源／失点源チャート...
+    # CSV ダウンロード
+    csv = full.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    ts = pd.Timestamp.now(tz="Asia/Tokyo").strftime("%Y%m%d_%H%M")
+    st.download_button("📥 CSV ダウンロード", csv, f"TTAnalyzer_{ts}.csv", "text/csv")
 
-# --- チャート ---
-non_empty = [df for df in st.session_state.sets if not df.empty]
-if non_empty:
-    full_df = pd.concat(non_empty, ignore_index=True)
-    def make_counts(flag):
-        sub = full_df[full_df["Winner"] == flag]
-        if sub.empty:
-            return pd.DataFrame(columns=["Factor", "Points"])
-        dfc = sub["Outcome"].value_counts().reset_index()
-        dfc.columns = ["Factor", "Points"]
-        return dfc
-
-    win_df = make_counts(P)
-    lose_df = make_counts(O)
-    highlight = alt.selection_point(on="mouseover", empty="none", fields=["Factor", "ServeType", "Outcome"])
-
-    st.markdown("##### 得点源 / 失点源")
-    cw, cl = st.columns(2)
-    for (df, title), col in [((win_df, "得点源"), cw), ((lose_df, "失点源"), cl)]:
-        chart = (
-            alt.Chart(df)
-            .mark_arc(innerRadius=50, outerRadius=90, cornerRadius=5, stroke="#333", strokeWidth=1)
-            .encode(
-                theta=alt.Theta("Points:Q"),
-                color=alt.Color("Factor:N", scale=alt.Scale(scheme="category10"),
-                                legend=alt.Legend(orient="right", title="要因", direction="vertical", offset=10)),
-                opacity=alt.condition(highlight, alt.value(1), alt.value(0.6)),
-                tooltip=[alt.Tooltip("Factor:N", title="要因"), alt.Tooltip("Points:Q", title="得点数")],
-            ).add_params(highlight).properties(width=350, height=300)
-        )
-        col.altair_chart(chart, use_container_width=False)
-
-    st.markdown("##### サーブ分析（サーバー別ビュー）")
-    view = st.radio("対象サーブを選択", ["自分サーブ", "相手サーブ"], horizontal=True, key="serve_view")
-    target = P if view == "自分サーブ" else O
-    df_view = full_df[full_df["Server"] == target]
-    tot = df_view.groupby("ServeType").size()
-    win = df_view[df_view["Winner"] == P].groupby("ServeType").size()
-    wr = (win / tot).fillna(0).reset_index()
-    wr.columns = ["ServeType", "WinRate"]
-    bar = (
-        alt.Chart(wr)
-        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
-        .encode(
-            y=alt.Y("ServeType:N", sort="-x", title=None),
-            x=alt.X("WinRate:Q", axis=alt.Axis(format=".0%", title="勝率")),
-            color=alt.Color("WinRate:Q", scale=alt.Scale(scheme="greens"), legend=None),
-            tooltip=[alt.Tooltip("ServeType:N", title="サーブ種類"), alt.Tooltip("WinRate:Q", title="勝率", format=".1%")],
-            opacity=alt.condition(highlight, alt.value(1), alt.value(0.7)),
-        ).add_params(highlight)
-    )
-    st.altair_chart(bar.properties(width=600, height=400), use_container_width=True)
-    pivot = df_view.pivot_table(index="ServeType", columns="Outcome", aggfunc="size", fill_value=0)
-    heat_df = pivot.reset_index().melt(id_vars="ServeType", var_name="Outcome", value_name="Count")
-    heat = (
-        alt.Chart(heat_df)
-        .mark_rect(stroke="white", strokeWidth=1)
-        .encode(
-            x=alt.X("Outcome:N", title="結果"),
-            y=alt.Y("ServeType:N", title="サーブ種類"),
-            color=alt.Color("Count:Q", scale=alt.Scale(scheme="lightmulti"), legend=alt.Legend(title="件数")),
-            opacity=alt.condition(highlight, alt.value(1), alt.value(0.6)),
-            tooltip=[
-                alt.Tooltip("ServeType:N", title="サーブ種類"),
-                alt.Tooltip("Outcome:N", title="結果"),
-                alt.Tooltip("Count:Q", title="件数"),
-            ],
-        ).add_params(highlight)
-    )
-    st.altair_chart(heat.properties(width=700, height=500), use_container_width=True)
-
-    # ─── CSVダウンロードボタン ───────────
-    df_all = get_full_df()
-    if not df_all.empty:
-        csv_str   = df_all.to_csv(index=False, encoding="utf-8-sig")
-        csv_bytes = csv_str.encode("utf-8-sig")
-        
-        ts = pd.Timestamp.now(tz="Asia/Tokyo").strftime("%Y%m%d_%H%M")
-        fname = f"TTAnalyzer_{ts}.csv"
-
-        st.download_button(
-            label="分析データをCSVでダウンロード",
-            data=csv_bytes,
-            file_name=fname,
-            mime="text/csv",
-            help="全セット結合＋Set列付きのCSVを出力します"
-        )
-
-    # --- AI 分析ボタン ------------------------------------------------
+    # AI 分析
     if st.button("🤖 データを分析する"):
-        with st.spinner("分析中…"):
-            # ① プロンプト生成
-            prompt = (
-                "あなたは卓球コーチです。\n"
-                f"次の CSV は {st.session_state.player_name}（指導選手）の試合データです。\n"
-                "次セットの戦術アドバイスの要点を5つの箇条書きで提案してください。\n\n"
-                + df_all.to_csv(index=False)
-            )
-    
-            # ② Gemini Flash を呼び出し
-            model = genai.GenerativeModel("gemini-2.0-flash")   # ← モデル名だけで OK
-            response = model.generate_content(prompt)
-    
-            # ③ 生成テキストをセッションに保存
-            st.session_state.analysis_result = response.text
-    # -----------------------------------------------------------------
-    if st.session_state.get("analysis_result"):
-        st.markdown("##### 📝 TT Analyzer による改善ポイント（試験運用中）")
-        st.write(st.session_state.analysis_result)
-     # ─────────────────────────────────────────
+        prompt = (
+            "あなたは卓球コーチです。\n"
+            f"{P} のラリー別データです。次セットの戦術アドバイスを5点で箇条書きしてください。\n\n"
+            + full.to_csv(index=False)
+        )
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        res = model.generate_content(prompt)
+        st.session_state.analysis = res.text
+
+    if st.session_state.get("analysis"):
+        st.markdown("##### 📝 AIによる改善ポイント")
+        st.write(st.session_state.analysis)
 
 st.caption("© 2025 TT Analyzer α版")
