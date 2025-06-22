@@ -130,14 +130,14 @@ def ensure_columns():
 
 if not st.session_state.get("_loaded", False):
     st.session_state.setdefault("sets", [new_set()])
-    st.session_state |= {
-        "current_set":      0,
+    st.session_state.update({
+      "current_set":      0,
         "current_server":   "選手A",
         "serve_counter":    0,
         "match_over":       False,
         "player_name":      "選手A",
         "opponent_name":    "対戦相手",
-    }
+    })
     load_state()
     ensure_columns()
     st.session_state["_loaded"] = True
