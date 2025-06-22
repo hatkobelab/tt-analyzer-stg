@@ -11,20 +11,27 @@ import pandas as pd
 import altair as alt
 import google.generativeai as genai
 genai.configure(api_key=st.secrets["gemini"]["api_key"])
-import firebase_admin
-from firebase_admin import credentials, firestore
+import os
+IS_STAGING = os.getenv("STAGING", "").lower() in ("1", "true", "yes")
 
-# --- Firebase 初期化 ---
-SERVICE_ACCOUNT = Path(__file__).with_name("myapp-firebase-adminsdk.json")
+if not IS_STAGING:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
 
-if not firebase_admin._apps:
-    if SERVICE_ACCOUNT.exists():
-        cred = credentials.Certificate(str(SERVICE_ACCOUNT))
-        firebase_admin.initialize_app(cred)
-    else:
-        firebase_admin.initialize_app()   # Cloud Run は ADC
+    # --- Firebase 初期化（本番のみ）---
+    SERVICE_ACCOUNT = Path(__file__).with_name("myapp-firebase-adminsdk.json")
+    if not firebase_admin._apps:
+        if SERVICE_ACCOUNT.exists():
+            cred = credentials.Certificate(str(SERVICE_ACCOUNT))
+            firebase_admin.initialize_app(cred)
+        else:
+            firebase_admin.initialize_app()   # Cloud Run は ADC
 
-db = firestore.client()
+    db = firestore.client()
+else:
+    # ステージングでは Firestore は使わない
+    db = None
+    st.sidebar.warning("⚠️ これはステージング環境です。Firestore はオフになっています。")
 
 # --- 定数 ---
 WIDGET_KEYS = {"save_names", "server_radio", "serve_type_radio", "outcome_radio", "confirm_reset", "cancel_reset"}
@@ -53,7 +60,7 @@ def _deserialize_state(data: dict):
     st.session_state.update(data)
 
 def load_state():
-    if _user_logged_in():
+    if not IS_STAGING and _user_logged_in():
         snap = _fs_doc().get()
         if snap.exists:
             try:
@@ -62,7 +69,8 @@ def load_state():
                 pass
 
 def save_state():
-    if _user_logged_in():
+    # 本番かつログイン済みなら Firestore に保存
+    if not IS_STAGING and _user_logged_in():
         _fs_doc().set(_serialize_state())
 
 def safe_rerun():
