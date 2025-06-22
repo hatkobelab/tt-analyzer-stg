@@ -12,6 +12,8 @@ import altair as alt
 import google.generativeai as genai
 genai.configure(api_key=st.secrets["gemini"]["api_key"])
 import os
+
+st.set_page_config(page_title="TT Analyzer α版", layout="centered", initial_sidebar_state="collapsed")
 IS_STAGING = os.getenv("STAGING", "").lower() in ("1", "true", "yes")
 
 if not IS_STAGING:
@@ -88,7 +90,6 @@ def reset_all():
     safe_rerun()
 
 # --- 認証UI ---
-st.set_page_config(page_title="TT Analyzer α版", layout="centered", initial_sidebar_state="collapsed")
 st.sidebar.title("ユーザー")
 if not _user_logged_in():
     st.sidebar.info("Googleでログインするとデータがクラウド保存されます。")
